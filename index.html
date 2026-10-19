@@ -23,6 +23,16 @@
   <label><input type="checkbox" id="optLabels" checked> Captions</label>
   <label><input type="checkbox" id="optOnlyData"> Only entries with data</label>
   <span class="sep"></span>
+  <label>Decode:
+    <select id="optDecodeMode">
+      <option value="auto" selected>auto</option>
+      <option value="raw">raw (linear)</option>
+      <option value="bitswap">bit 3/4 swap</option>
+      <option value="swizzle">GS unswizzle</option>
+      <option value="both">bit swap + unswizzle</option>
+    </select>
+  </label>
+  <span class="sep"></span>
   <button id="btnSelectAll">Select all</button>
   <button id="btnSelectNone">Clear</button>
   <span id="selCount">0 selected</span>
@@ -46,12 +56,11 @@
       <h2>Notes</h2>
       <div class="note">
         <b>.PC header</b>: <code>u32 ZSIZE</code>, <code>u32 SIZE</code>. Payload at byte 8.<br>
-        <b>LZSS</b>: LSB-first flags, <code>len=(hi&amp;0xF)+3</code>,
-        <code>pos=lo|((hi&amp;0xF0)&lt;&lt;4)</code>, ring fill 0x20.<br>
+        <b>LZSS</b>: LSB-first flags, <code>len=(hi&amp;0xF)+3</code>, <code>pos=lo|((hi&amp;0xF0)&lt;&lt;4)</code>.<br>
         <b>TIN</b>: counts at <code>+8/+0xC/+0x10</code>, arrays at <code>+0x20</code>.<br>
         <b>Array C</b>: <code>+0 type</code>, <code>+4 sz</code>, <code>+8 width</code>, <code>+0xC offset</code>.<br>
-        <b>Types</b>: 1 = PSMT8+mip, 5 = PSMT32.<br>
-        <b>Selection</b>: click = single, ctrl+click = toggle, shift+click = range, ctrl+A = all, esc = clear.
+        <b>Types</b>: 1 = PSMT8+mip, 5 = PSMT32. Bit 31 = pre-swizzled/bit-swapped.<br>
+        <b>Decode</b>: GS unswizzle + palette CSM1/CSM2 swap + sub_474360 bit swap.
       </div>
     </div>
   </aside>
@@ -100,12 +109,13 @@ const dropTin = $("dropTin"), dropGfx = $("dropGfx");
 const stage = $("stage"), statusEl = $("status");
 const hdrKv = $("hdrKv"), arrInfo = $("arrInfo"), entryList = $("entryList");
 const optLabels = $("optLabels"), optOnlyData = $("optOnlyData");
+const optDecodeMode = $("optDecodeMode");
 const selCount = $("selCount");
 
 const MAX_OUT = 64 * 1024 * 1024;
 function u32le(b, o) { return (b[o] | (b[o+1]<<8) | (b[o+2]<<16) | (b[o+3]<<24)) >>> 0; }
 function u32(b, o) { return u32le(b, o); }
-function esc(s){return String(s).replace(/[&<>\"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 function hex(n){return (n>>>0).toString(16).toUpperCase().padStart(8,"0");}
 
 function lzssDecompress(src, off, targetSize) {
@@ -355,10 +365,12 @@ function renderHeader() {
     `entries with data: <b>${state.entries.filter(e => e.gfxOff !== 0xFFFFFFFF).length}</b> / ${h.countC}`;
 }
 
-function typeName(t) {
-  if (t === 1) return "PSMT8+mip";
-  if (t === 5) return "PSMT32";
-  return "type=" + t;
+function typeName(rawType) {
+  const base = rawType & 0x7FFFFFFF;
+  const presz = (rawType & 0x80000000) ? " (preswz)" : "";
+  if (base === 1) return "PSMT8+mip" + presz;
+  if (base === 5) return "PSMT32" + presz;
+  return "type=" + base + presz;
 }
 
 let lastClicked = -1;
@@ -368,10 +380,9 @@ function renderEntryList() {
   for (const e of state.entries) {
     const div = document.createElement("div");
     div.className = "entry" + (e.gfxOff === 0xFFFFFFFF ? " nodata" : "");
-    const typeVal = e.type & 0x7FFFFFFF;
     div.innerHTML = `
       <span class="idx">#${e.i}</span>
-      <span class="type">${typeName(typeVal)}</span>
+      <span class="type">${typeName(e.type)}</span>
       <span class="sz">${e.sz}B ${e.width}w</span>
       <span class="off">${e.gfxOff === 0xFFFFFFFF ? "-" : "0x" + hex(e.gfxOff)}</span>
     `;
@@ -435,7 +446,7 @@ $("btnSelectNone").addEventListener("click", () => {
 
 document.addEventListener("keydown", (ev) => {
   const tag = (ev.target && ev.target.tagName) || "";
-  if (tag === "INPUT" || tag === "TEXTAREA" || (ev.target && ev.target.isContentEditable)) return;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (ev.target && ev.target.isContentEditable)) return;
 
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "a") {
     if (!state.hdr) return;
@@ -454,45 +465,174 @@ function scaleAlpha(a) {
   return (s * 255 + 64) >> 7;
 }
 
-function decodePSMCT32(data, off, size, szBytes) {
+function bitswap34(word) {
+  const hi = (word & 0x10101010) >>> 1;
+  const lo = (word & 0x08080808) << 1;
+  const mid = word & 0xE7E7E7E7;
+  return ((hi | lo | mid) >>> 0);
+}
+
+function bitswap34Bytes(src, off, len) {
+  const out = new Uint8Array(len);
+  out.set(src.subarray(off, off + len));
+  for (let i = 0; i + 4 <= len; i += 4) {
+    const w = (out[i] | (out[i+1] << 8) | (out[i+2] << 16) | (out[i+3] << 24)) >>> 0;
+    const sw = bitswap34(w);
+    out[i]   = sw & 0xFF;
+    out[i+1] = (sw >>> 8) & 0xFF;
+    out[i+2] = (sw >>> 16) & 0xFF;
+    out[i+3] = (sw >>> 24) & 0xFF;
+  }
+  return out;
+}
+
+// True PS2 GS hardware swizzle (ported from reversebox)
+function unswizzlePSMT8_GS(src, off, width, height) {
+  const dst = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const block_location = (y & ~0xF) * width + (x & ~0xF) * 2;
+      const swap_selector = (((y + 2) >> 2) & 0x1) * 4;
+      const pos_y = (((y & ~3) >> 1) + (y & 1)) & 0x7;
+      const column_location = pos_y * width * 2 + ((x + swap_selector) & 0x7) * 4;
+      const byte_num = ((y >> 1) & 1) + ((x >> 2) & 2);
+      const swizzle_id = block_location + column_location + byte_num;
+
+      if (off + swizzle_id < src.length) {
+        dst[y * width + x] = src[off + swizzle_id];
+      }
+    }
+  }
+  return dst;
+}
+
+function unswizzlePSMT32_8x8(src, off, size) {
+  const dst = new Uint8Array(size * size * 4);
+  const cols = size / 8;
+  const rows = size / 8;
+  for (let by = 0; by < rows; by++) {
+    for (let bx = 0; bx < cols; bx++) {
+      const blockOff = off + ((by * cols + bx) * 64) * 4;
+      for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+          const sIdx = blockOff + (y * 8 + x) * 4;
+          const dIdx = ((by * 8 + y) * size + (bx * 8 + x)) * 4;
+          for (let k = 0; k < 4; k++) dst[dIdx + k] = src[sIdx + k] || 0;
+        }
+      }
+    }
+  }
+  return dst;
+}
+
+function unswizzlePS2Palette(paletteData) {
+  const out = new Uint8Array(1024);
+  const parts = 256 / 32;
+  const stripes = 2;
+  const colors = 8;
+  const blocks = 2;
+  let index = 0;
+  
+  for (let part = 0; part < parts; part++) {
+    for (let block = 0; block < blocks; block++) {
+      for (let stripe = 0; stripe < stripes; stripe++) {
+        for (let color = 0; color < colors; color++) {
+          const palette_index = index + 
+            (part * colors * stripes * blocks) + 
+            (block * colors) + 
+            (stripe * stripes * colors) + 
+            color;
+          
+          const srcOffset = palette_index * 4;
+          const dstOffset = (index++) * 4;
+          
+          out[dstOffset]   = paletteData[srcOffset];
+          out[dstOffset+1] = paletteData[srcOffset+1];
+          out[dstOffset+2] = paletteData[srcOffset+2];
+          out[dstOffset+3] = paletteData[srcOffset+3];
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function prepareIndices(data, off, size, szBytes, mode, isPSMT8) {
+  if (mode === "raw") return { data, off };
+
+  let src = data;
+  let srcOff = off;
+
+  if (mode === "bitswap" || mode === "both") {
+    const pixelBytes = size * size * (isPSMT8 ? 1 : 4);
+    const blen = Math.min(pixelBytes, data.length - off);
+    src = bitswap34Bytes(src, srcOff, blen & ~3);
+    srcOff = 0;
+  }
+
+  if (mode === "swizzle" || mode === "both") {
+    if (isPSMT8) {
+      src = unswizzlePSMT8_GS(src, srcOff, size, size);
+    } else {
+      src = unswizzlePSMT32_8x8(src, srcOff, size);
+    }
+    srcOff = 0;
+  }
+
+  return { data: src, off: srcOff };
+}
+
+function decodePSMCT32(data, off, size, szBytes, mode) {
   const bytes = Math.min(size * size * 4, szBytes || size * size * 4);
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext("2d");
   if (off + bytes > data.length) return { canvas, ok: false, reason: "out of range" };
+
+  const prep = prepareIndices(data, off, size, szBytes, mode, false);
   const img = ctx.createImageData(size, size);
   const px = img.data;
-  const n = Math.min(size * size, bytes >> 2);
+  const n = Math.min(size * size, (prep.data.length - prep.off) >> 2);
   for (let i = 0; i < n; i++) {
-    const p = off + i * 4;
-    px[i*4+0] = data[p+0];
-    px[i*4+1] = data[p+1];
-    px[i*4+2] = data[p+2];
-    px[i*4+3] = scaleAlpha(data[p+3]);
+    const p = prep.off + i * 4;
+    px[i*4+0] = prep.data[p+0];
+    px[i*4+1] = prep.data[p+1];
+    px[i*4+2] = prep.data[p+2];
+    px[i*4+3] = scaleAlpha(prep.data[p+3]);
   }
   ctx.putImageData(img, 0, 0);
   return { canvas, ok: true };
 }
 
-function decodePSMT8(data, off, size, szBytes) {
+function decodePSMT8(data, off, size, szBytes, mode) {
   const total = 1024 + size * size;
   if (off + total > data.length) return { canvas: null, ok: false, reason: "out of range" };
+
+  let palRaw = data.subarray(off, off + 1024);
+  if (mode === "swizzle" || mode === "both") {
+    palRaw = unswizzlePS2Palette(palRaw);
+  }
+  
   const pal = new Uint8Array(256 * 4);
   for (let i = 0; i < 256; i++) {
-    const p = off + i * 4;
-    pal[i*4+0] = data[p+0];
-    pal[i*4+1] = data[p+1];
-    pal[i*4+2] = data[p+2];
-    pal[i*4+3] = scaleAlpha(data[p+3]);
+    const p = i * 4;
+    pal[p+0] = palRaw[p+0];
+    pal[p+1] = palRaw[p+1];
+    pal[p+2] = palRaw[p+2];
+    pal[p+3] = scaleAlpha(palRaw[p+3]);
   }
+
   const idxOff = off + 1024;
+  const prep = prepareIndices(data, idxOff, size, size * size, mode, true);
+  const indices = prep.data.subarray(prep.off, prep.off + size * size);
+
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext("2d");
   const img = ctx.createImageData(size, size);
   const px = img.data;
   for (let i = 0; i < size * size; i++) {
-    const ci = data[idxOff + i];
+    const ci = indices[i];
     px[i*4+0] = pal[ci*4+0];
     px[i*4+1] = pal[ci*4+1];
     px[i*4+2] = pal[ci*4+2];
@@ -500,6 +640,48 @@ function decodePSMT8(data, off, size, szBytes) {
   }
   ctx.putImageData(img, 0, 0);
   return { canvas, ok: true };
+}
+
+function blockEdgeScore(canvas) {
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  const img = ctx.getImageData(0, 0, w, h).data;
+  let score = 0;
+  for (let y = 0; y < h; y += 8) {
+    for (let x = 1; x < w; x++) {
+      const a = (y * w + (x-1)) * 4;
+      const b = (y * w + x) * 4;
+      score += Math.abs(img[a] - img[b]) + Math.abs(img[a+1] - img[b+1]) + Math.abs(img[a+2] - img[b+2]);
+    }
+  }
+  for (let x = 0; x < w; x += 8) {
+    for (let y = 1; y < h; y++) {
+      const a = ((y-1) * w + x) * 4;
+      const b = (y * w + x) * 4;
+      score += Math.abs(img[a] - img[b]) + Math.abs(img[a+1] - img[b+1]) + Math.abs(img[a+2] - img[b+2]);
+    }
+  }
+  return score;
+}
+
+function decodeEntry(e, mode) {
+  const sz = e.sz, w = e.width;
+  if (e.gfxOff === 0xFFFFFFFF || w <= 0 || sz <= 0) return null;
+  const t = e.type & 0x7FFFFFFF;
+  if (t === 1) return decodePSMT8(state.gfxDec, e.gfxOff, w, sz, mode);
+  return decodePSMCT32(state.gfxDec, e.gfxOff, w, sz, mode);
+}
+
+function bestDecode(e) {
+  const modes = ["raw", "bitswap", "swizzle", "both"];
+  let best = null, bestScore = Infinity;
+  for (const m of modes) {
+    const r = decodeEntry(e, m);
+    if (!r || !r.ok || !r.canvas) continue;
+    const s = blockEdgeScore(r.canvas);
+    if (s < bestScore) { bestScore = s; best = r; }
+  }
+  return best;
 }
 
 function renderAll() {
@@ -511,6 +693,7 @@ function renderAll() {
   stage.innerHTML = "";
   const onlyData = optOnlyData.checked;
   const showLabels = optLabels.checked;
+  const mode = optDecodeMode.value;
 
   let shown = 0;
   for (const e of state.entries) {
@@ -521,11 +704,10 @@ function renderAll() {
     wrap.addEventListener("click", (ev) => selectEntry(e.i, ev));
 
     let res = null;
-    const sz = e.sz, w = e.width;
-    if (e.gfxOff !== 0xFFFFFFFF && w > 0 && sz > 0) {
-      const t = e.type & 0x7FFFFFFF;
-      if (t === 1) res = decodePSMT8(state.gfxDec, e.gfxOff, w, sz);
-      else res = decodePSMCT32(state.gfxDec, e.gfxOff, w, sz);
+    if (mode === "auto") {
+      res = bestDecode(e);
+    } else {
+      res = decodeEntry(e, mode);
     }
 
     if (res && res.ok && res.canvas) {
@@ -541,9 +723,9 @@ function renderAll() {
       const cap = document.createElement("div");
       cap.className = "cap";
       cap.innerHTML =
-        `<b>#${e.i}</b> ${typeName(e.type & 0x7FFFFFFF)}<br>` +
-        `${w} x ${w} px<br>` +
-        `${sz} B<br>` +
+        `<b>#${e.i}</b> ${typeName(e.type)}<br>` +
+        `${e.width} x ${e.width} px<br>` +
+        `${e.sz} B<br>` +
         `off 0x${hex(e.gfxOff)}`;
       wrap.appendChild(cap);
     }
@@ -571,7 +753,7 @@ $("btnExport").addEventListener("click", () => {
 
 optOnlyData.addEventListener("change", renderAll);
 optLabels.addEventListener("change", renderAll);
+optDecodeMode.addEventListener("change", renderAll);
 </script>
 </body>
 </html>
-
