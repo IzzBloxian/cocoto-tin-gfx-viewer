@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TIN/GFX Viewer - PS2 Level Texture Inspector</title>
+<style>
+  :root {
+    --font-ui: "Segoe UI", Tahoma, Geneva, sans-serif;
+    --font-mono: Consolas, "Courier New", monospace;
+
+    --bg:        #dfe8f3;
+    --bg-blur:   #b8cbe0;
+    --surface:   #eef4fb;
+    --surface-2: #dbe6f2;
+    --panel:     #f3f7fc;
+    --border:    #a8b9cc;
+    --border-2:  #c4d2e2;
+    --text:      #14202e;
+    --text-dim:  #5a6a7a;
+    --text-faint:#8b9aab;
+    --accent:    #3c8ddc;
+    --accent-2:  #2c6fb3;
+    --accent-fg: #ffffff;
+    --ok:        #2f9b4a;
+    --err:       #c93a3a;
+    --warn:      #b8860b;
+    --sel:       #cfe2f5;
+    --shadow:    0 4px 14px rgba(20,40,70,.18), 0 1px 3px rgba(20,40,70,.14);
+    --title-grad: linear-gradient(180deg, #f4f8fd 0%, #d4e3f2 50%, #bcd2e8 51%, #cbdcf0 100%);
+    --btn-grad:   linear-gradient(180deg, #f6fafe 0%, #e0ebf7 50%, #d2e2f2 51%, #e6f0fa 100%);
+    --btn-grad-h: linear-gradient(180deg, #fbfdff 0%, #e8f1fa 50%, #d8e7f5 51%, #edf4fc 100%);
+    --btn-grad-p: linear-gradient(180deg, #b9d8f4 0%, #a3c8ee 50%, #95beeb 51%, #aacdf1 100%);
+    --input-bg:   #ffffff;
+  }
+
+  html[data-theme="dark"] {
+    --bg:        #0f1418;
+    --bg-blur:   #18242c;
+    --surface:   #172029;
+    --surface-2: #1d2833;
+    --panel:     #131a21;
+    --border:    #2a3844;
+    --border-2:  #38495a;
+    --text:      #d8e4ee;
+    --text-dim:  #8fa2b4;
+    --text-faint:#5a6b7c;
+    --accent:    #4fc3f7;
+    --accent-2:  #29a3d9;
+    --accent-fg: #08141c;
+    --ok:        #4fd48a;
+    --err:       #ff6b6b;
+    --warn:      #ffc14d;
+    --sel:       #1d3a52;
+    --shadow:    0 4px 16px rgba(0,0,0,.55), 0 1px 3px rgba(0,0,0,.4);
+    --title-grad: linear-gradient(180deg, #22323f 0%, #1a2630 48%, #14202a 52%, #1d2d3a 100%);
+    --btn-grad:   linear-gradient(180deg, #2b3d4c 0%, #21303d 48%, #1b2833 52%, #243644 100%);
+    --btn-grad-h: linear-gradient(180deg, #364b5c 0%, #293c4b 48%, #223441 52%, #2e4253 100%);
+    --btn-grad-p: linear-gradient(180deg, #1a4d6b 0%, #154158 48%, #123a4f 52%, #1a5374 100%);
+    --input-bg:   #0c1217;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 12.5px/1.45 var(--font-ui);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: background .15s, color .15s;
+  }
+
+  header {
+    padding: 10px 18px;
+    background: var(--title-grad);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    flex-wrap: wrap;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    position: relative;
+    z-index: 2;
+  }
+  html[data-theme="dark"] header {
+    box-shadow: 0 1px 4px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.04);
+  }
+  header h1 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: .2px;
+    text-shadow: 0 1px 0 rgba(255,255,255,.5);
+  }
+  html[data-theme="dark"] header h1 {
+    text-shadow: 0 1px 0 rgba(0,0,0,.6);
+  }
+  header .sub {
+    color: var(--text-dim);
+    font-size: 11.5px;
+  }
+  header .sub code {
+    background: var(--input-bg);
+    border: 1px solid var(--border-2);
+    border-radius: 3px;
+    padding: 0 4px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text);
+  }
+
+  button, .drop {
+    background: var(--btn-grad);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 5px 12px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 1px 2px rgba(0,0,0,.06);
+    transition: background .1s, border-color .1s, box-shadow .1s;
+  }
+  html[data-theme="dark"] button,
+  html[data-theme="dark"] .drop {
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 1px 2px rgba(0,0,0,.5);
+  }
+  button:hover, .drop:hover {
+    background: var(--btn-grad-h);
+    border-color: var(--accent);
+  }
+  button:active, .drop:active {
+    background: var(--btn-grad-p);
+    border-color: var(--accent-2);
+    box-shadow: inset 0 2px 4px rgba(0,0,0,.2);
+  }
+  button:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+  }
+  .drop.loaded {
+    border-color: var(--ok);
+    color: var(--ok);
+  }
+  input[type=file] { display: none; }
+
+  #toolbar {
+    padding: 8px 18px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: 12px;
+    position: relative;
+    z-index: 1;
+  }
+  #toolbar label {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    cursor: pointer;
+    color: var(--text);
+  }
+  #toolbar input[type=checkbox] {
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    cursor: pointer;
+    position: relative;
+    box-shadow: inset 0 1px 1px rgba(0,0,0,.1);
+  }
+  #toolbar input[type=checkbox]:hover { border-color: var(--accent); }
+  #toolbar input[type=checkbox]:checked {
+    background: var(--accent);
+    border-color: var(--accent-2);
+  }
+  #toolbar input[type=checkbox]:checked::after {
+    content: "\2713";
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent-fg);
+    font-size: 10px;
+    font-weight: bold;
+    line-height: 1;
+    top: -1px;
+  }
+  #status {
+    flex: 1;
+    text-align: right;
+    color: var(--text-faint);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #toolbar .sep {
+    width: 1px;
+    height: 18px;
+    background: var(--border-2);
+    margin: 0 2px;
+  }
+  #selCount {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 0 4px;
+  }
+
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    min-height: 0;
+  }
+
+  #sidebar {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    overflow: auto;
+  }
+  #sidebar .sec {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-2);
+  }
+  #sidebar .sec h2 {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .7px;
+    color: var(--text-dim);
+    margin: 0 0 8px;
+  }
+  .kv {
+    display: grid;
+    grid-template-columns: 100px 1fr;
+    gap: 3px 8px;
+    font-size: 11.5px;
+    font-family: var(--font-mono);
+  }
+  .kv .k { color: var(--text-dim); }
+  .kv .v { color: var(--text); word-break: break-all; }
+  .arr {
+    margin: 8px 0 0;
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.7;
+  }
+  .arr b { color: var(--text); font-weight: 600; }
+
+  #entryList {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 3px;
+    max-height: 320px;
+    overflow: auto;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,.06);
+    user-select: none;
+  }
+  html[data-theme="dark"] #entryList {
+    box-shadow: inset 0 1px 3px rgba(0,0,0,.6);
+  }
+  .entry {
+    display: grid;
+    grid-template-columns: 34px 1fr 1fr auto;
+    gap: 8px;
+    align-items: center;
+    padding: 3px 6px;
+    border-radius: 2px;
+    cursor: pointer;
+    font-size: 11.5px;
+    font-family: var(--font-mono);
+  }
+  .entry:hover { background: var(--sel); }
+  .entry.sel {
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+  .entry .idx   { color: var(--text-faint); }
+  .entry.sel .idx { color: rgba(0,0,0,.5); }
+  .entry .type  { color: var(--accent); font-weight: 600; }
+  .entry.sel .type { color: var(--accent-fg); }
+  .entry .sz    { color: var(--text-dim); font-size: 10.5px; }
+  .entry.sel .sz { color: rgba(0,0,0,.7); }
+  .entry .off   { color: var(--text-faint); font-size: 10.5px; }
+  .entry.sel .off { color: rgba(0,0,0,.55); }
+  .entry.nodata { opacity: .5; }
+
+  #viewport {
+    overflow: auto;
+    padding: 16px;
+    background:
+      radial-gradient(ellipse at top, var(--bg-blur) 0%, var(--bg) 65%),
+      var(--bg);
+  }
+  html[data-theme="dark"] #viewport {
+    background:
+      radial-gradient(ellipse at top, #1a2a36 0%, #0f1418 60%),
+      var(--bg);
+  }
+  #stage {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-content: flex-start;
+    min-height: 100%;
+    box-shadow: var(--shadow);
+  }
+  html[data-theme="dark"] #stage {
+    background: linear-gradient(180deg, #172029 0%, #131b22 100%);
+    border-color: var(--border-2);
+  }
+
+  .tex {
+    background: var(--surface-2);
+    border: 1px solid var(--border-2);
+    border-radius: 4px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    cursor: pointer;
+    user-select: none;
+    transition: border-color .1s, box-shadow .1s;
+  }
+  html[data-theme="dark"] .tex {
+    background: linear-gradient(180deg, #1d2833 0%, #172029 100%);
+    box-shadow: 0 2px 6px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.03);
+  }
+  .tex:hover { border-color: var(--accent); }
+  .tex.sel {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent), 0 1px 3px rgba(0,0,0,.1);
+  }
+  html[data-theme="dark"] .tex.sel {
+    box-shadow: 0 0 0 2px var(--accent), 0 2px 6px rgba(0,0,0,.4);
+  }
+  .tex canvas {
+    background: repeating-conic-gradient(
+      var(--surface) 0 25%, var(--surface-2) 0 50%) 0 0 / 14px 14px;
+    border-radius: 2px;
+    border: 1px solid var(--border-2);
+    image-rendering: pixelated;
+    display: block;
+  }
+  .tex .cap {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    text-align: center;
+    line-height: 1.5;
+    padding: 2px 0;
+  }
+  .tex .cap b { color: var(--text); font-weight: 600; }
+
+  .empty {
+    color: var(--text-faint);
+    padding: 60px 20px;
+    text-align: center;
+    font-size: 12.5px;
+    white-space: pre-wrap;
+    font-family: var(--font-mono);
+  }
+  .warn { color: var(--warn); }
+  .err  { color: var(--err); }
+  .ok   { color: var(--ok); }
+  .muted { color: var(--text-faint); }
+  .note {
+    font-size: 10.5px;
+    color: var(--text-dim);
+    line-height: 1.7;
+    margin-top: 6px;
+  }
+  .note code {
+    background: var(--input-bg);
+    border: 1px solid var(--border-2);
+    border-radius: 2px;
+    padding: 0 4px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text);
+  }
+
+  .theme-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .theme-btn svg { width: 14px; height: 14px; }
+
+  ::-webkit-scrollbar { width: 12px; height: 12px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 6px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--border-2);
+    border: 3px solid transparent;
+    background-clip: padding-box;
+  }
+  html[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #2d3d4b; }
+  html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #3a4d5e; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TIN/GFX Viewer</h1>
+  <span class="sub">PS2 <code>L{n}TIN.PC</code> + <code>L{n}GFX.PC</code></span>
+  <div style="flex:1"></div>
+  <label class="drop" id="dropTin">Load TIN.PC<input type="file" id="fileTin"></label>
+  <label class="drop" id="dropGfx">Load GFX.PC<input type="file" id="fileGfx"></label>
+  <button class="theme-btn" id="btnTheme" title="Toggle theme">
+    <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round"></svg>
+    <span id="themeLabel">Light</span>
+  </button>
+</header>
+
+<div id="toolbar">
+  <label><input type="checkbox" id="optLabels" checked> Captions</label>
+  <label><input type="checkbox" id="optOnlyData"> Only entries with data</label>
+  <span class="sep"></span>
+  <button id="btnSelectAll">Select all</button>
+  <button id="btnSelectNone">Clear</button>
+  <span id="selCount">0 selected</span>
+  <span class="sep"></span>
+  <button id="btnExport">Export selected as PNG</button>
+  <span id="status">no files loaded</span>
+</div>
+
+<main>
+  <aside id="sidebar">
+    <div class="sec">
+      <h2>TIN Header</h2>
+      <div class="kv" id="hdrKv"><div class="k">status</div><div class="v">awaiting file</div></div>
+      <div class="arr" id="arrInfo"></div>
+    </div>
+    <div class="sec">
+      <h2>Entries</h2>
+      <div id="entryList"><div class="note">Load TIN.PC to populate.</div></div>
+    </div>
+    <div class="sec">
+      <h2>Notes</h2>
+      <div class="note">
+        <b>.PC header</b>: <code>u32 ZSIZE</code>, <code>u32 SIZE</code>. Payload at byte 8.<br>
+        <b>LZSS</b>: LSB-first flags, <code>len=(hi&amp;0xF)+3</code>,
+        <code>pos=lo|((hi&amp;0xF0)&lt;&lt;4)</code>, ring fill 0x20.<br>
+        <b>TIN</b>: counts at <code>+8/+0xC/+0x10</code>, arrays at <code>+0x20</code>.<br>
+        <b>Array C</b>: <code>+0 type</code>, <code>+4 sz</code>, <code>+8 width</code>, <code>+0xC offset</code>.<br>
+        <b>Types</b>: 1 = PSMT8+mip, 5 = PSMT32.<br>
+        <b>Selection</b>: click = single, ctrl+click = toggle, shift+click = range, ctrl+A = all, esc = clear.
+      </div>
+    </div>
+  </aside>
+
+  <section id="viewport">
+    <div id="stage"><div class="empty">Load a TIN.PC + GFX.PC pair to preview textures.</div></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+(function initTheme() {
+  const saved = localStorage.getItem("tinviewer.theme") || "light";
+  document.documentElement.dataset.theme = saved;
+  const btn = document.getElementById("btnTheme");
+  const label = document.getElementById("themeLabel");
+  const icon = document.getElementById("themeIcon");
+  const SUN = '<circle cx="12" cy="12" r="4"></circle>' +
+              '<path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>';
+  const MOON = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>';
+  function sync() {
+    const t = document.documentElement.dataset.theme;
+    label.textContent = t === "dark" ? "Dark" : "Light";
+    icon.innerHTML = t === "dark" ? MOON : SUN;
+  }
+  sync();
+  btn.addEventListener("click", () => {
+    const t = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = t;
+    localStorage.setItem("tinviewer.theme", t);
+    sync();
+  });
+})();
+
+const state = {
+  tin: null, gfx: null,
+  tinDec: null, gfxDec: null,
+  tinInfo: null, gfxInfo: null,
+  hdr: null, entries: [], selected: new Set(),
+};
+
+const $ = id => document.getElementById(id);
+const fileTin = $("fileTin"), fileGfx = $("fileGfx");
+const dropTin = $("dropTin"), dropGfx = $("dropGfx");
+const stage = $("stage"), statusEl = $("status");
+const hdrKv = $("hdrKv"), arrInfo = $("arrInfo"), entryList = $("entryList");
+const optLabels = $("optLabels"), optOnlyData = $("optOnlyData");
+const selCount = $("selCount");
+
+const MAX_OUT = 64 * 1024 * 1024;
+function u32le(b, o) { return (b[o] | (b[o+1]<<8) | (b[o+2]<<16) | (b[o+3]<<24)) >>> 0; }
+function u32(b, o) { return u32le(b, o); }
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+function hex(n){return (n>>>0).toString(16).toUpperCase().padStart(8,"0");}
+
+function lzssDecompress(src, off, targetSize) {
+  if (!src || off >= src.length) return null;
+  const N = 4096, F = 18;
+  const stopAt = (targetSize && targetSize > 0 && targetSize < MAX_OUT) ? targetSize : MAX_OUT;
+  let out = new Uint8Array(Math.max(4096, Math.min(stopAt, src.length * 8 + 64)));
+  let outLen = 0;
+  const ring = new Uint8Array(N + F - 1);
+  ring.fill(0x20);
+  let r = N - F;
+  let srcPos = off;
+  let flags = 0, flagBit = 0;
+
+  const grow = () => {
+    if (out.length >= stopAt) return false;
+    const ns = new Uint8Array(Math.min(out.length * 2, stopAt));
+    ns.set(out.subarray(0, outLen));
+    out = ns;
+    return true;
+  };
+
+  while (srcPos < src.length && outLen < stopAt) {
+    if (flagBit === 0) { flags = src[srcPos++]; flagBit = 8; }
+    const isLiteral = flags & 1;
+    flags >>>= 1;
+    flagBit--;
+
+    if (isLiteral) {
+      if (srcPos >= src.length) break;
+      const c = src[srcPos++];
+      if (outLen >= out.length) { if (!grow()) break; }
+      out[outLen++] = c;
+      ring[r] = c; r = (r + 1) & (N - 1);
+    } else {
+      if (srcPos + 1 >= src.length) break;
+      const lo = src[srcPos++];
+      const hi = src[srcPos++];
+      const pos = lo | ((hi & 0xF0) << 4);
+      const len = (hi & 0x0F) + 3;
+      let p = pos;
+      for (let i = 0; i < len && outLen < stopAt; i++) {
+        const c = ring[p & (N - 1)];
+        if (outLen >= out.length) { if (!grow()) return out.subarray(0, outLen); }
+        out[outLen++] = c;
+        ring[r] = c; r = (r + 1) & (N - 1);
+        p++;
+      }
+    }
+  }
+  return out.subarray(0, outLen);
+}
+
+function tinLayout(buf) {
+  if (!buf || buf.length < 0x20) return null;
+  const cA = u32(buf, 0x08), cB = u32(buf, 0x0C), cC = u32(buf, 0x10);
+  if (cA > 1e6 || cB > 1e6 || cC > 1e6) return null;
+  const arrAOff = 0x20;
+  const arrBOff = arrAOff + cA * 8;
+  const arrCOff = arrBOff + cB * 16;
+  const need = arrCOff + cC * 16;
+  if (need > buf.length + 32 || need < 0x20) return null;
+  return { countA: cA, countB: cB, countC: cC, need, arrAOff, arrBOff, arrCOff };
+}
+function tinSizeCheck(buf) { return tinLayout(buf) !== null; }
+
+function readPCHeader(buf) {
+  if (!buf || buf.length < 8) return null;
+  const zsize = u32le(buf, 0), size = u32le(buf, 4);
+  if (zsize === 0 || zsize > MAX_OUT || size > MAX_OUT) return null;
+  return { zsize, size };
+}
+
+async function autoDecompressPC(buf, expectedSize, kindHint) {
+  const origSize = buf.length;
+  const outOf = (method, data, note) => ({ data, info: { method, origSize, newSize: data.length, note } });
+
+  if (kindHint === "tin" && tinSizeCheck(buf)) return outOf("raw", buf, "TIN header valid");
+  if (expectedSize > 0 && buf.length === expectedSize) return outOf("raw", buf, "matches expected");
+
+  const hdr = readPCHeader(buf);
+  if (hdr) {
+    const decA = lzssDecompress(buf, 8, hdr.size);
+    if (decA && decA.length > 64) {
+      const exact = decA.length === hdr.size;
+      if (kindHint === "tin") {
+        if (tinSizeCheck(decA))
+          return outOf("LZSS (.PC)", decA, `SIZE=${hdr.size} ${exact ? "exact" : "got=" + decA.length}`);
+      } else {
+        if (exact) return outOf("LZSS (.PC)", decA, `SIZE=${hdr.size} exact`);
+        if (expectedSize > 0 && Math.abs(decA.length - expectedSize) < 65536)
+          return outOf("LZSS (.PC)", decA, `SIZE=${hdr.size} got=${decA.length}`);
+      }
+    }
+    const decB = lzssDecompress(buf, 8, 0);
+    if (decB && decB.length > 64) {
+      if (kindHint === "tin" && tinSizeCheck(decB))
+        return outOf("LZSS (.PC, stream-end)", decB, `got=${decB.length}`);
+      if (kindHint !== "tin")
+        return outOf("LZSS (.PC, stream-end)", decB, `got=${decB.length}`);
+    }
+  }
+
+  if (buf.length > 4 && buf[0] === 0x1F && buf[1] === 0x8B) {
+    try {
+      const ds = new DecompressionStream("gzip");
+      const stream = new Blob([buf]).stream().pipeThrough(ds);
+      const d = new Uint8Array(await new Response(stream).arrayBuffer());
+      if (d.length > 64) return outOf("gzip", d, null);
+    } catch (e) {}
+  }
+
+  return outOf("raw", buf, expectedSize > 0 ? `expected ${expectedSize}, got ${buf.length}` : "");
+}
+
+function wireDrop(label, input, kind) {
+  label.addEventListener("dragover", e => { e.preventDefault(); label.classList.add("drag"); });
+  label.addEventListener("dragleave", () => label.classList.remove("drag"));
+  label.addEventListener("drop", e => {
+    e.preventDefault(); label.classList.remove("drag");
+    const f = e.dataTransfer.files[0]; if (f) readFile(f, kind);
+  });
+  input.addEventListener("change", e => { const f = e.target.files[0]; if (f) readFile(f, kind); });
+}
+wireDrop(dropTin, fileTin, "tin");
+wireDrop(dropGfx, fileGfx, "gfx");
+
+stage.addEventListener("click", (ev) => {
+  if (ev.target === stage) {
+    state.selected.clear();
+    highlightSelected();
+  }
+});
+
+async function readFile(file, kind) {
+  const raw = new Uint8Array(await file.arrayBuffer());
+  if (kind === "tin") {
+    state.tin = raw;
+    dropTin.classList.add("loaded");
+    dropTin.firstChild.textContent = `TIN: ${file.name}`;
+    const { data, info } = await autoDecompressPC(raw, -1, "tin");
+    state.tinDec = data; state.tinInfo = info;
+    parseTin();
+    if (state.gfx) await reDecompressGfx();
+  } else {
+    state.gfx = raw;
+    dropGfx.classList.add("loaded");
+    dropGfx.firstChild.textContent = `GFX: ${file.name}`;
+    await reDecompressGfx();
+  }
+  updateStatus();
+  if (state.hdr && state.gfxDec) renderAll();
+}
+
+function expectedGfxSize() {
+  if (!state.hdr) return -1;
+  let max = 0;
+  for (const e of state.entries) {
+    if (e.gfxOff === 0xFFFFFFFF) continue;
+    const end = e.gfxOff + e.sz;
+    if (end > max) max = end;
+  }
+  return max > 0 ? max : -1;
+}
+
+async function reDecompressGfx() {
+  if (!state.gfx) return;
+  const expected = expectedGfxSize();
+  const { data, info } = await autoDecompressPC(state.gfx, expected, "gfx");
+  state.gfxDec = data;
+  state.gfxInfo = info;
+}
+
+function updateStatus() {
+  const parts = [];
+  const fmt = (label, info) => {
+    if (!info) return null;
+    const pct = info.origSize ? ((info.newSize / info.origSize) * 100).toFixed(0) : "?";
+    return `${label}: ${info.method} ${info.origSize.toLocaleString()} -> ${info.newSize.toLocaleString()}B (${pct}%)`;
+  };
+  const t = fmt("TIN", state.tinInfo), g = fmt("GFX", state.gfxInfo);
+  if (t) parts.push(t);
+  if (g) parts.push(g);
+  statusEl.textContent = parts.length ? parts.join("    ") : "no files loaded";
+}
+
+function parseTin() {
+  const b = state.tinDec;
+  if (!b) { setHdrError("TIN not loaded"); return; }
+  if (b.length < 0x20) { setHdrError(`TIN too small (0x${b.length.toString(16)})`); return; }
+  const layout = tinLayout(b);
+  if (!layout) {
+    const cA = u32(b, 0x08), cB = u32(b, 0x0C), cC = u32(b, 0x10);
+    const need = 0x20 + cA*8 + cB*16 + cC*16;
+    setHdrError(
+      `TIN layout invalid (have 0x${b.length.toString(16)} = ${b.length}).\n` +
+      `A=${cA} B=${cB} C=${cC} -> need 0x${need.toString(16)}\n` +
+      `first dwords: ${[0,4,8,0xC,0x10,0x14,0x18,0x1C].map(o => "0x"+hex(u32(b,o))).join(" ")}`
+    );
+    return;
+  }
+  const hdr = {
+    f0: u32(b, 0x00), f1: u32(b, 0x04),
+    countA: layout.countA, countB: layout.countB, countC: layout.countC,
+    arrAOff: layout.arrAOff, arrBOff: layout.arrBOff, arrCOff: layout.arrCOff,
+  };
+  const entries = [];
+  for (let i = 0; i < hdr.countC; i++) {
+    const o = hdr.arrCOff + i * 16;
+    entries.push({
+      i,
+      type:   u32(b, o + 0x00),
+      sz:     u32(b, o + 0x04),
+      width:  u32(b, o + 0x08),
+      gfxOff: u32(b, o + 0x0C),
+    });
+  }
+  state.hdr = hdr;
+  state.entries = entries;
+  state.selected.clear();
+  renderHeader();
+  renderEntryList();
+}
+
+function setHdrError(msg) {
+  state.hdr = null; state.entries = []; state.selected.clear();
+  hdrKv.innerHTML = `<div class="k">error</div><div class="v err" style="white-space:pre-wrap">${esc(msg)}</div>`;
+  arrInfo.textContent = "";
+  entryList.innerHTML = `<div class="note err">Parse failed.</div>`;
+  stage.innerHTML = `<div class="empty err">${esc(msg)}</div>`;
+  updateSelCount();
+}
+
+function renderHeader() {
+  const h = state.hdr;
+  const info = state.tinInfo, ginfo = state.gfxInfo;
+  hdrKv.innerHTML = `
+    <div class="k">f0 / f1</div><div class="v">0x${hex(h.f0)} / 0x${hex(h.f1)}</div>
+    <div class="k">counts</div><div class="v">A=${h.countA}  B=${h.countB}  C=${h.countC}</div>
+    <div class="k">array A</div><div class="v">@0x${hex(h.arrAOff)} stride 8</div>
+    <div class="k">array B</div><div class="v">@0x${hex(h.arrBOff)} stride 16</div>
+    <div class="k">array C</div><div class="v">@0x${hex(h.arrCOff)} stride 16</div>
+    <div class="k">TIN codec</div><div class="v ${info && info.method !== "raw" ? "ok" : ""}">${info ? esc(info.method) : "?"}${info && info.note ? ` <span class="muted">(${esc(info.note)})</span>` : ""}</div>
+    <div class="k">GFX codec</div><div class="v ${ginfo && ginfo.method !== "raw" ? "ok" : ""}">${ginfo ? esc(ginfo.method) : "-"}${ginfo && ginfo.note ? ` <span class="muted">(${esc(ginfo.note)})</span>` : ""}</div>
+  `;
+  arrInfo.innerHTML =
+    `entries with data: <b>${state.entries.filter(e => e.gfxOff !== 0xFFFFFFFF).length}</b> / ${h.countC}`;
+}
+
+function typeName(t) {
+  if (t === 1) return "PSMT8+mip";
+  if (t === 5) return "PSMT32";
+  return "type=" + t;
+}
+
+let lastClicked = -1;
+
+function renderEntryList() {
+  entryList.innerHTML = "";
+  for (const e of state.entries) {
+    const div = document.createElement("div");
+    div.className = "entry" + (e.gfxOff === 0xFFFFFFFF ? " nodata" : "");
+    const typeVal = e.type & 0x7FFFFFFF;
+    div.innerHTML = `
+      <span class="idx">#${e.i}</span>
+      <span class="type">${typeName(typeVal)}</span>
+      <span class="sz">${e.sz}B ${e.width}w</span>
+      <span class="off">${e.gfxOff === 0xFFFFFFFF ? "-" : "0x" + hex(e.gfxOff)}</span>
+    `;
+    div.addEventListener("click", (ev) => selectEntry(e.i, ev));
+    div.dataset.idx = e.i;
+    entryList.appendChild(div);
+  }
+  highlightSelected();
+}
+
+function selectEntry(i, ev) {
+  const set = state.selected;
+  if (ev && ev.ctrlKey) {
+    if (set.has(i)) set.delete(i); else set.add(i);
+  } else if (ev && ev.shiftKey && lastClicked >= 0) {
+    const a = Math.min(lastClicked, i), b = Math.max(lastClicked, i);
+    for (let k = a; k <= b; k++) set.add(k);
+  } else {
+    set.clear();
+    set.add(i);
+  }
+  lastClicked = i;
+  highlightSelected();
+}
+
+function highlightSelected() {
+  entryList.querySelectorAll(".entry").forEach(el => {
+    el.classList.toggle("sel", state.selected.has(Number(el.dataset.idx)));
+  });
+  stage.querySelectorAll(".tex").forEach(el => {
+    el.classList.toggle("sel", state.selected.has(Number(el.dataset.idx)));
+  });
+  updateSelCount();
+}
+
+function updateSelCount() {
+  const n = state.selected.size;
+  selCount.textContent = `${n} selected`;
+}
+
+function visibleEntryIds() {
+  const onlyData = optOnlyData.checked;
+  const ids = [];
+  for (const e of state.entries) {
+    if (onlyData && e.gfxOff === 0xFFFFFFFF) continue;
+    ids.push(e.i);
+  }
+  return ids;
+}
+
+$("btnSelectAll").addEventListener("click", () => {
+  state.selected.clear();
+  for (const i of visibleEntryIds()) state.selected.add(i);
+  highlightSelected();
+});
+
+$("btnSelectNone").addEventListener("click", () => {
+  state.selected.clear();
+  highlightSelected();
+});
+
+document.addEventListener("keydown", (ev) => {
+  const tag = (ev.target && ev.target.tagName) || "";
+  if (tag === "INPUT" || tag === "TEXTAREA" || (ev.target && ev.target.isContentEditable)) return;
+
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "a") {
+    if (!state.hdr) return;
+    ev.preventDefault();
+    state.selected.clear();
+    for (const i of visibleEntryIds()) state.selected.add(i);
+    highlightSelected();
+  } else if (ev.key === "Escape") {
+    state.selected.clear();
+    highlightSelected();
+  }
+});
+
+function scaleAlpha(a) {
+  const s = a > 0x80 ? 0x80 : a;
+  return (s * 255 + 64) >> 7;
+}
+
+function decodePSMCT32(data, off, size, szBytes) {
+  const bytes = Math.min(size * size * 4, szBytes || size * size * 4);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (off + bytes > data.length) return { canvas, ok: false, reason: "out of range" };
+  const img = ctx.createImageData(size, size);
+  const px = img.data;
+  const n = Math.min(size * size, bytes >> 2);
+  for (let i = 0; i < n; i++) {
+    const p = off + i * 4;
+    px[i*4+0] = data[p+0];
+    px[i*4+1] = data[p+1];
+    px[i*4+2] = data[p+2];
+    px[i*4+3] = scaleAlpha(data[p+3]);
+  }
+  ctx.putImageData(img, 0, 0);
+  return { canvas, ok: true };
+}
+
+function decodePSMT8(data, off, size, szBytes) {
+  const total = 1024 + size * size;
+  if (off + total > data.length) return { canvas: null, ok: false, reason: "out of range" };
+  const pal = new Uint8Array(256 * 4);
+  for (let i = 0; i < 256; i++) {
+    const p = off + i * 4;
+    pal[i*4+0] = data[p+0];
+    pal[i*4+1] = data[p+1];
+    pal[i*4+2] = data[p+2];
+    pal[i*4+3] = scaleAlpha(data[p+3]);
+  }
+  const idxOff = off + 1024;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(size, size);
+  const px = img.data;
+  for (let i = 0; i < size * size; i++) {
+    const ci = data[idxOff + i];
+    px[i*4+0] = pal[ci*4+0];
+    px[i*4+1] = pal[ci*4+1];
+    px[i*4+2] = pal[ci*4+2];
+    px[i*4+3] = pal[ci*4+3];
+  }
+  ctx.putImageData(img, 0, 0);
+  return { canvas, ok: true };
+}
+
+function renderAll() {
+  if (!state.hdr) return;
+  if (!state.gfxDec) {
+    stage.innerHTML = `<div class="empty">Load GFX.PC to preview textures.</div>`;
+    return;
+  }
+  stage.innerHTML = "";
+  const onlyData = optOnlyData.checked;
+  const showLabels = optLabels.checked;
+
+  let shown = 0;
+  for (const e of state.entries) {
+    if (onlyData && e.gfxOff === 0xFFFFFFFF) continue;
+    const wrap = document.createElement("div");
+    wrap.className = "tex";
+    wrap.dataset.idx = e.i;
+    wrap.addEventListener("click", (ev) => selectEntry(e.i, ev));
+
+    let res = null;
+    const sz = e.sz, w = e.width;
+    if (e.gfxOff !== 0xFFFFFFFF && w > 0 && sz > 0) {
+      const t = e.type & 0x7FFFFFFF;
+      if (t === 1) res = decodePSMT8(state.gfxDec, e.gfxOff, w, sz);
+      else res = decodePSMCT32(state.gfxDec, e.gfxOff, w, sz);
+    }
+
+    if (res && res.ok && res.canvas) {
+      wrap.appendChild(res.canvas);
+    } else {
+      const ph = document.createElement("div");
+      ph.style.cssText = "width:96px;height:96px;display:flex;align-items:center;justify-content:center;color:currentColor;opacity:.5;font-size:11px;border:1px dashed currentColor;border-radius:3px";
+      ph.textContent = e.gfxOff === 0xFFFFFFFF ? "no data" : (res ? res.reason : "size 0");
+      wrap.appendChild(ph);
+    }
+
+    if (showLabels) {
+      const cap = document.createElement("div");
+      cap.className = "cap";
+      cap.innerHTML =
+        `<b>#${e.i}</b> ${typeName(e.type & 0x7FFFFFFF)}<br>` +
+        `${w} x ${w} px<br>` +
+        `${sz} B<br>` +
+        `off 0x${hex(e.gfxOff)}`;
+      wrap.appendChild(cap);
+    }
+
+    stage.appendChild(wrap);
+    shown++;
+  }
+
+  if (shown === 0) stage.innerHTML = `<div class="empty">No entries to display.</div>`;
+  highlightSelected();
+}
+
+$("btnExport").addEventListener("click", () => {
+  if (state.selected.size === 0) { alert("Select at least one entry."); return; }
+  const ids = [...state.selected].sort((a, b) => a - b);
+  for (const i of ids) {
+    const tex = document.querySelector(`.tex[data-idx="${i}"] canvas`);
+    if (!tex) continue;
+    const a = document.createElement("a");
+    a.download = `tex_${i}.png`;
+    a.href = tex.toDataURL("image/png");
+    a.click();
+  }
+});
+
+optOnlyData.addEventListener("change", renderAll);
+optLabels.addEventListener("change", renderAll);
+</script>
+</body>
+</html>
