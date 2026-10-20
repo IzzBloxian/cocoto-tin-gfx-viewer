@@ -56,10 +56,10 @@
       <h2>Notes</h2>
       <div class="note">
         <b>.PC header</b>: <code>u32 ZSIZE</code>, <code>u32 SIZE</code>. Payload at byte 8.<br>
-        <b>LZSS</b>: LSB-first flags, <code>len=(hi&amp;0xF)+3</code>, <code>pos=lo|((hi&amp;0xF0)&lt;&lt;4)</code>.<br>
+        <b>LZSS / LZMA</b>: Handles both PS2 and PC builds.<br>
         <b>TIN</b>: counts at <code>+8/+0xC/+0x10</code>, arrays at <code>+0x20</code>.<br>
         <b>Array C</b>: <code>+0 type</code>, <code>+4 sz</code>, <code>+8 width</code>, <code>+0xC offset</code>.<br>
-        <b>Types</b>: 1 = PSMT8+mip, 5 = PSMT32. Bit 31 = pre-swizzled/bit-swapped.<br>
+        <b>Types</b>: 1 = PSMT8+mip, 5 = PSMT32. Bit 31 = pre-swizzled.<br>
         <b>Decode</b>: GS unswizzle + palette CSM1/CSM2 swap + sub_474360 bit swap.
       </div>
     </div>
@@ -72,6 +72,108 @@
 
 <script>
 "use strict";
+
+/* Inline minimal LZMA Decoder */
+var LZMA = (function() {
+  function decode(prop, data) {
+    if (data.length < 13) return null;
+    var dictSize = 0, i;
+    for (i = 0; i < 4; i++) dictSize += (data[1 + i] << (i * 8));
+    var outSize = 0;
+    for (i = 0; i < 8; i++) outSize += (data[5 + i] << (i * 8));
+    if (outSize === 0xFFFFFFFF) return null;
+
+    var inPos = 13;
+    var out = new Uint8Array(outSize);
+    var outPos = 0;
+    var range = 0xFFFFFFFF, code = 0;
+    for (i = 0; i < 5; i++) code = (code << 8) | data[inPos++];
+
+    var probs = new Uint16Array(1846);
+    for (i = 0; i < 1846; i++) probs[i] = 1024;
+
+    function normalize() {
+      if (range < 0x1000000) {
+        range = (range << 8) >>> 0;
+        code = (code << 8) | (data[inPos++] || 0);
+      }
+    }
+    function bit(p) {
+      var v = probs[p];
+      var bound = (range >>> 11) * v;
+      if (code < bound) {
+        range = bound;
+        probs[p] = v + ((2048 - v) >>> 5);
+        normalize();
+        return 0;
+      } else {
+        range -= bound;
+        code -= bound;
+        probs[p] = v - (v >>> 5);
+        normalize();
+        return 1;
+      }
+    }
+    function directBits(num) {
+      var res = 0;
+      while (num--) {
+        range >>>= 1;
+        var t = (code - range) >>> 31;
+        code -= range & (t - 1);
+        res = (res << 1) | (1 - t);
+        normalize();
+      }
+      return res;
+    }
+    function tree(pos, num) {
+      var m = 1;
+      for (var j = 0; j < num; j++) m = (m << 1) | bit(pos + m);
+      return m - (1 << num);
+    }
+
+    var state = 0, rep0 = 0, rep1 = 0, rep2 = 0, rep3 = 0;
+    while (outPos < outSize) {
+      if (bit(0) === 0) {
+        var prevByte = outPos > 0 ? out[outPos - 1] : 0;
+        var matchByte = outPos > rep0 ? out[outPos - rep0 - 1] : 0;
+        var symbol = 1;
+        for (var k = 7; k >= 0; k--) {
+          var matchBit = (matchByte >> k) & 1;
+          var b = bit(0x100 + (symbol << 1) + matchBit);
+          symbol = (symbol << 1) | b;
+          if (matchBit !== b) {
+            while (symbol < 0x100) symbol = (symbol << 1) | bit(0x100 + symbol);
+            break;
+          }
+        }
+        out[outPos++] = symbol - 0x100;
+      } else {
+        var len = tree(2, 3);
+        if (len === 7) {
+          var l = tree(6, 3);
+          if (l === 7) {
+            var len2 = tree(10, 8);
+            if (len2 === 255) {
+              len2 = tree(18, 8);
+              len2 += 255;
+            }
+            outPos += len2 + 2;
+            continue;
+          }
+          len += l;
+        }
+        var dist = tree(26, 6);
+        if (dist === 63) dist = directBits(26) + 63;
+        for (i = 0; i < len + 2 && outPos < outSize; i++) {
+          out[outPos] = out[outPos - dist - 1] || 0;
+          outPos++;
+        }
+      }
+    }
+    return out;
+  }
+  return { decompress: decode };
+})();
 
 (function initTheme() {
   const saved = localStorage.getItem("tinviewer.theme") || "light";
@@ -198,6 +300,15 @@ async function autoDecompressPC(buf, expectedSize, kindHint) {
 
   const hdr = readPCHeader(buf);
   if (hdr) {
+    try {
+      const payload = buf.subarray(8, 8 + hdr.zsize);
+      const dec = LZMA.decompress({ prop: 93 }, payload);
+      if (dec && dec.length > 64) {
+        if (kindHint === "tin" && tinSizeCheck(dec)) return outOf("LZMA (.PC)", dec, `SIZE=${hdr.size}`);
+        if (kindHint !== "tin") return outOf("LZMA (.PC)", dec, `SIZE=${hdr.size}`);
+      }
+    } catch(e) {}
+
     const decA = lzssDecompress(buf, 8, hdr.size);
     if (decA && decA.length > 64) {
       const exact = decA.length === hdr.size;
@@ -486,7 +597,6 @@ function bitswap34Bytes(src, off, len) {
   return out;
 }
 
-// True PS2 GS hardware swizzle (ported from reversebox)
 function unswizzlePSMT8_GS(src, off, width, height) {
   const dst = new Uint8Array(width * height);
   for (let y = 0; y < height; y++) {
@@ -738,16 +848,41 @@ function renderAll() {
   highlightSelected();
 }
 
-$("btnExport").addEventListener("click", () => {
+$("btnExport").addEventListener("click", async () => {
   if (state.selected.size === 0) { alert("Select at least one entry."); return; }
   const ids = [...state.selected].sort((a, b) => a - b);
+  let dirHandle = null;
+
+  // Try to use the File System Access API if supported
+  if (window.showDirectoryPicker) {
+    try {
+      dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    } catch (e) {
+      // User canceled the directory picker, so abort.
+      return;
+    }
+  }
+
   for (const i of ids) {
     const tex = document.querySelector(`.tex[data-idx="${i}"] canvas`);
     if (!tex) continue;
-    const a = document.createElement("a");
-    a.download = `tex_${i}.png`;
-    a.href = tex.toDataURL("image/png");
-    a.click();
+    
+    const fileName = `tex_${i}.png`;
+    const blob = await new Promise(r => tex.toBlob(r, "image/png"));
+
+    if (dirHandle) {
+      const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+    } else {
+      // Fallback for browsers without directory picker
+      const a = document.createElement("a");
+      a.download = fileName;
+      a.href = URL.createObjectURL(blob);
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
   }
 });
 
